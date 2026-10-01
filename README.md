@@ -190,6 +190,12 @@ fatal, but registration/status alone does not prove GPU node placement. Compare
 FP16 output and warm latency against the CPU build using the same audio before
 relying on this experimental path. GPU execution/performance remain unverified.
 
+Normal logs keep OSTT lifecycle messages and ONNX Runtime warnings/errors, but
+omit per-kernel runtime INFO/debug chatter. `RUST_LOG` overrides these defaults;
+use `RUST_LOG=info,ort=debug` when deliberately collecting runtime diagnostics,
+or `RUST_LOG=debug,ort=warn` to debug OSTT without noisy runtime logs. Restart the
+daemon after rebuilding or changing its logging environment.
+
 For NVIDIA, build with `--features parakeet-cuda` and select
 `parakeet/pianissimo-sv-fp16`. This requires an ONNX Runtime CUDA build matching
 the installed CUDA/cuDNN runtime, including its provider shared libraries.
