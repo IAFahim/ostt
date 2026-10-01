@@ -2,6 +2,46 @@ use std::path::Path;
 
 use super::TranscriptionConfig;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Backend {
+    Cpu,
+    #[cfg(feature = "parakeet-cuda")]
+    Cuda,
+    #[cfg(feature = "parakeet-webgpu")]
+    WebGpu,
+}
+
+impl Backend {
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::Cpu => "parakeet/cpu",
+            #[cfg(feature = "parakeet-cuda")]
+            Self::Cuda => "parakeet/cuda",
+            #[cfg(feature = "parakeet-webgpu")]
+            Self::WebGpu => "parakeet/webgpu",
+        }
+    }
+}
+
+pub(crate) fn backend_for_model(path: &Path) -> Backend {
+    // Quantized exports are CPU models. Selecting one must keep working in the
+    // same application even when GPU capabilities are compiled in.
+    if path.join("encoder-model.int8.onnx").exists()
+        || path.join("encoder-model.int4.onnx").exists()
+    {
+        return Backend::Cpu;
+    }
+    #[cfg(feature = "parakeet-webgpu")]
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        return Backend::WebGpu;
+    }
+    #[cfg(feature = "parakeet-cuda")]
+    if cfg!(target_os = "linux") {
+        return Backend::Cuda;
+    }
+    Backend::Cpu
+}
+
 pub(super) async fn transcribe(
     config: &TranscriptionConfig,
     audio_path: &Path,
@@ -63,19 +103,24 @@ pub(crate) fn load_audio(path: &Path) -> anyhow::Result<Vec<f32>> {
 #[cfg(feature = "parakeet")]
 pub(crate) fn load_model(path: &Path) -> anyhow::Result<parakeet_rs::ParakeetTDT> {
     use parakeet_rs::{ExecutionConfig, ParakeetTDT};
-    let encoder_config = ExecutionConfig::default();
-    #[cfg(feature = "parakeet-cuda")]
-    let encoder_config = encoder_config.with_custom_configure(|builder| {
-        Ok(builder
-            .with_execution_providers([ort::ep::CUDA::default().build().error_on_failure()])?)
-    });
+    let backend = backend_for_model(path);
+    let encoder_config = match backend {
+        Backend::Cpu => ExecutionConfig::default(),
+        #[cfg(feature = "parakeet-cuda")]
+        Backend::Cuda => ExecutionConfig::default().with_custom_configure(|builder| {
+            Ok(builder
+                .with_execution_providers([ort::ep::CUDA::default().build().error_on_failure()])?)
+        }),
+        #[cfg(feature = "parakeet-webgpu")]
+        Backend::WebGpu => ExecutionConfig::default().with_custom_configure(|builder| {
+            Ok(builder.with_execution_providers([ort::ep::WebGPU::default()
+                .build()
+                .error_on_failure()])?)
+        }),
+    };
     tracing::info!(
         "Parakeet: loading encoder with {}, decoder/joint with CPU",
-        if cfg!(feature = "parakeet-cuda") {
-            "CUDA (registration required)"
-        } else {
-            "CPU"
-        }
+        backend.id()
     );
     ParakeetTDT::from_pretrained_with_joint_config(
         path,
@@ -138,6 +183,39 @@ pub(crate) fn infer(
 #[cfg(all(test, feature = "parakeet"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn int8_models_stay_on_cpu_in_the_same_gpu_capable_application() {
+        let path = std::env::temp_dir().join(format!(
+            "ostt-backend-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("encoder-model.int8.onnx"), b"model").unwrap();
+        assert_eq!(backend_for_model(&path), Backend::Cpu);
+        std::fs::remove_file(path.join("encoder-model.int8.onnx")).unwrap();
+        std::fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn fp16_models_use_only_a_backend_supported_by_the_build_and_platform() {
+        let backend = backend_for_model(Path::new("/nonexistent-fp16-model"));
+        if cfg!(all(
+            feature = "parakeet-webgpu",
+            target_os = "macos",
+            target_arch = "aarch64"
+        )) {
+            assert_eq!(backend.id(), "parakeet/webgpu");
+        } else if cfg!(all(feature = "parakeet-cuda", target_os = "linux")) {
+            assert_eq!(backend.id(), "parakeet/cuda");
+        } else {
+            assert_eq!(backend.id(), "parakeet/cpu");
+        }
+    }
 
     #[test]
     fn overlap_ownership_has_no_gap_or_duplicate_at_the_boundary() {

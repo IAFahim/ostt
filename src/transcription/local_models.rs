@@ -187,13 +187,11 @@ pub fn model_disk_usage(entry: &RegistryEntry) -> u64 {
 }
 
 pub(crate) fn model_backend(model_id: &str) -> Result<String, ModelError> {
-    if resolve_installed_model_path(model_id)?.is_dir() {
-        Ok(if cfg!(feature = "parakeet-cuda") {
-            "parakeet/cuda"
-        } else {
-            "parakeet/cpu"
-        }
-        .to_string())
+    let path = resolve_installed_model_path(model_id)?;
+    if path.is_dir() {
+        Ok(super::api::parakeet::backend_for_model(&path)
+            .id()
+            .to_string())
     } else {
         Ok(format!("whisper/{}", super::local_inference_backend()))
     }

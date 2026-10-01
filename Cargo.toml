@@ -11,6 +11,8 @@ homepage = "https://github.com/kristoferlund/ostt"
 [features]
 parakeet = ["dep:parakeet-rs"]
 parakeet-cuda = ["parakeet", "parakeet-rs/cuda", "dep:ort", "ort/cuda"]
+# Experimental Apple Silicon encoder acceleration through native WebGPU/Metal.
+parakeet-webgpu = ["parakeet", "parakeet-rs/webgpu", "dep:ort", "ort/webgpu"]
 # Enable NVIDIA CUDA GPU acceleration for local transcription.
 # Requires CUDA toolkit at build time. The resulting binary dynamically links
 # libcuda (from the NVIDIA driver) and libcublas at runtime.

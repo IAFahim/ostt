@@ -106,7 +106,7 @@ struct Bundle {
 }
 
 pub(crate) fn catalog() -> Vec<RegistryEntry> {
-    [ ("int8", 630, "CPU"), ("fp16", 1224, "NVIDIA CUDA") ]
+    [ ("int8", 630, "CPU"), ("fp16", 1224, "Apple Silicon WebGPU / NVIDIA CUDA (experimental); CPU otherwise") ]
         .into_iter()
         .map(|(variant, size_mb, hardware)| RegistryEntry {
             id: format!("pianissimo-sv-{variant}"),

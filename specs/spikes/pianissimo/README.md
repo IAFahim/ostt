@@ -113,3 +113,18 @@ Verified on 2026-10-01:
 NVIDIA execution, GPU node placement/performance/memory, FP16 runtime inference,
 broader accuracy, interactive TUI use, microphone capture, cross-platform builds,
 and release packaging remain unverified. Existing release packages are unchanged.
+
+## Apple Silicon WebGPU extension
+
+The CPU build and daemon have subsequently been reported working smoothly on an
+M4 Pro. `--features parakeet-webgpu` adds an experimental native WebGPU/Metal
+encoder path on Apple Silicon. FP16 models select it automatically; INT8 models
+remain on CPU, and both Whisper and Parakeet remain in the same application and
+model picker. The decoder/joint stays on CPU. Provider registration must succeed,
+and daemon backend identity prevents reusing a CPU daemon for WebGPU requests.
+
+GPU correctness, actual node placement, and performance still require testing on
+the M4 Pro. Mac CI checks are added, not locally verified. See the main README and
+PR build/run instructions for the same-model CPU/FP16 versus GPU comparison.
+Standard release inclusion remains pending, including runtime packaging and the
+lack of a pinned ONNX Runtime prebuilt for Intel Macs.

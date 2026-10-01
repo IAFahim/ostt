@@ -163,13 +163,40 @@ whole-word ownership to avoid emitting overlap twice. Accuracy near boundaries
 still needs broader evaluation. Whisper decoder params and keyword boosting are
 not supported; text replacements continue to apply.
 
+The same application includes Whisper and Parakeet: choose a model in `ostt model`,
+without changing engine modes or installing an engine-specific application.
+Build features below currently enable experimental capabilities for testing;
+making Parakeet standard in distributed builds remains a release requirement,
+including resolving the lack of a pinned ONNX Runtime prebuilt for Intel Macs.
+
+On **Apple Silicon**, test native Metal-backed WebGPU acceleration with:
+
+```bash
+cargo build --locked --release --features parakeet-webgpu
+./target/release/ostt model local download parakeet/pianissimo-sv-fp16
+./target/release/ostt model select parakeet/pianissimo-sv-fp16
+./target/release/ostt daemon restart
+./target/release/ostt daemon status
+./target/release/ostt transcribe audio.wav
+```
+
+The FP16 encoder requests WebGPU (`parakeet/webgpu` in daemon status); WebGPU uses
+Metal natively, without a browser. The build places the Dawn runtime library beside
+the executable; keep that companion library alongside `ostt` if moving the binary.
+The decoder/joint stays on CPU. INT8 models
+continue to use CPU in this same build, and Whisper retains its normal Metal
+support. CPU-only builds run FP16 on CPU as well. GPU registration failures are
+fatal, but registration/status alone does not prove GPU node placement. Compare
+FP16 output and warm latency against the CPU build using the same audio before
+relying on this experimental path. GPU execution/performance remain unverified.
+
 For NVIDIA, build with `--features parakeet-cuda` and select
 `parakeet/pianissimo-sv-fp16`. This requires an ONNX Runtime CUDA build matching
 the installed CUDA/cuDNN runtime, including its provider shared libraries.
 The encoder requests CUDA with registration errors treated as fatal; the
 decoder/joint deliberately runs on CPU. **GPU execution, node placement, and
 performance have not been validated on NVIDIA hardware.** This does not reuse
-Whisper's CUDA/Vulkan backend. AMD, Intel, and macOS acceleration are not enabled
+Whisper's CUDA/Vulkan backend. AMD and Intel acceleration are not enabled
 for Parakeet in this prototype.
 
 Custom TDT models can be added with `[c]` using a `manifest.json#VARIANT` URL.

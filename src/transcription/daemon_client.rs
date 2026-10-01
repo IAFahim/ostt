@@ -207,6 +207,10 @@ mod tests {
     fn cuda_requests_cannot_reuse_cpu_or_legacy_parakeet_daemons() {
         assert!(!backend_matches(Some("parakeet/cpu"), "parakeet/cuda"));
         assert!(!backend_matches(None, "parakeet/cuda"));
+        assert!(!backend_matches(Some("parakeet/cpu"), "parakeet/webgpu"));
+        assert!(!backend_matches(Some("parakeet/cuda"), "parakeet/webgpu"));
+        assert!(!backend_matches(None, "parakeet/webgpu"));
+        assert!(backend_matches(Some("parakeet/webgpu"), "parakeet/webgpu"));
         assert!(backend_matches(Some("parakeet/cuda"), "parakeet/cuda"));
         assert!(
             backend_matches(None, "whisper/CPU"),
