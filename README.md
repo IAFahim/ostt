@@ -137,6 +137,52 @@ Run `ostt model` to switch between authenticated cloud models and local models. 
 
 Per-provider and per-model params are configured under `[provider.params]` and `[provider."model".params]`, or passed per run with `--param key=value`. See [Providers and Models](https://ostt.ai/reference/providers) and [Configuration](https://ostt.ai/guide/configuration) for supported params.
 
+### Local Parakeet / Pianissimo (experimental source builds)
+
+Native Rust Parakeet **TDT** inference is available through the optional
+`parakeet` feature; no Python installation or wrapper is used. Existing release
+packages are unchanged and do not yet include this backend.
+
+```bash
+cargo build --release --features parakeet
+./target/release/ostt model local download parakeet/pianissimo-sv-int8
+./target/release/ostt model select parakeet/pianissimo-sv-int8
+./target/release/ostt daemon start  # Optional: keep the model loaded
+./target/release/ostt -c
+./target/release/ostt transcribe audio.wav
+```
+
+The model picker also supports downloading, selecting, and removing Pianissimo.
+Downloads use pinned Klang exports and verify both the manifest and every file.
+Cached model inference works offline. File transcription requires **16 kHz mono
+PCM16 WAV**; recording uses that format automatically. Convert other files with
+`ffmpeg -i input.mp3 -ar 16000 -ac 1 -c:a pcm_s16le audio.wav`.
+
+Long recordings use 30-second windows with 4-second overlap and timestamp-based
+whole-word ownership to avoid emitting overlap twice. Accuracy near boundaries
+still needs broader evaluation. Whisper decoder params and keyword boosting are
+not supported; text replacements continue to apply.
+
+For NVIDIA, build with `--features parakeet-cuda` and select
+`parakeet/pianissimo-sv-fp16`. This requires an ONNX Runtime CUDA build matching
+the installed CUDA/cuDNN runtime, including its provider shared libraries.
+The encoder requests CUDA with registration errors treated as fatal; the
+decoder/joint deliberately runs on CPU. **GPU execution, node placement, and
+performance have not been validated on NVIDIA hardware.** This does not reuse
+Whisper's CUDA/Vulkan backend. AMD, Intel, and macOS acceleration are not enabled
+for Parakeet in this prototype.
+
+Custom TDT models can be added with `[c]` using a `manifest.json#VARIANT` URL.
+The manifest must follow Klang's `model`, `builds`, and `files` schema, including
+file sizes and SHA-256 hashes, and expose compatible encoder/decoder graphs,
+`vocab.txt`, `config.json`, and `nemo128.onnx`. Resolving the URL pins its manifest
+checksum. Arbitrary NeMo checkpoints, CTC models, and unrelated ONNX formats are
+not supported.
+
+Pianissimo weights are by [Klang AI AB](https://huggingface.co/KlangAI/pianissimo-sv-onnx),
+licensed under **CC BY 4.0**, and fine-tuned from NVIDIA Parakeet v3. See
+`specs/spikes/pianissimo/README.md` for the initial compatibility measurements.
+
 ### Berget Pianissimo (Swedish)
 
 Select `berget/klang/pianissimo` with `ostt model`, or transcribe a file:
