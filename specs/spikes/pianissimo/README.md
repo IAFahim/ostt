@@ -24,10 +24,8 @@ text. It deliberately uses CPU; it does not claim GPU acceleration.
 
 ## Public speech fixture
 
-Google FLEURS Swedish test utterance `4184612854874415460` (CC BY 4.0),
-distributed by SagaScript at revision `926b4920acb532e3dbcf82710765b5a5ca811e75`:
-
-https://github.com/Magnus-Gille/sagascript/blob/926b4920acb532e3dbcf82710765b5a5ca811e75/test-audio/swedish-fleurs-hongkong.wav
+[Google FLEURS](https://huggingface.co/datasets/google/fleurs) Swedish test
+utterance `4184612854874415460` (CC BY 4.0), converted to 16 kHz mono PCM16 WAV.
 
 SHA-256: `82e5cefc3793e1352ae1f4cebd3848ab57e96f91799192b7d1b7d027151c5ff2`.
 
@@ -91,7 +89,7 @@ Reproduce the Linux CLI checks after building with `--features parakeet`:
 ```sh
 bash specs/spikes/pianissimo/ostt-smoke.sh \
   target/release/ostt /tmp/opencode/pianissimo-int8 \
-  /tmp/opencode/ostt-research-sagascript/test-audio/swedish-fleurs-hongkong.wav
+  path/to/swedish-fleurs-hongkong.wav
 ```
 
 The script uses fresh isolated XDG directories and leaves artifacts under
