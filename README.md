@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Open source voice-to-text for Linux and macOS</strong>
+  <strong>Open source voice-to-text for Linux, macOS, and Windows</strong>
 </p>
 
 <p align="center">
@@ -70,6 +70,20 @@ curl -fsSL https://ostt.ai/install | bash
 The installer detects your platform, installs supported runtime dependencies, downloads the latest release, verifies its checksum, and installs the `ostt` CLI.
 
 If you prefer platform package managers, see the docs for Homebrew, AUR, `.deb`, and `.rpm` options.
+
+### Windows
+
+Download the `x86_64-pc-windows-msvc` ZIP from [GitHub Releases](https://github.com/kristoferlund/ostt/releases), extract it, and add its directory to `PATH`. Install FFmpeg with `winget install Gyan.FFmpeg`, then reopen your terminal. Windows 10/11 on x86-64 is supported; local Whisper uses the CPU build.
+
+Run `ostt auth`, `ostt model`, then `ostt -c` from PowerShell or Command Prompt. Enable microphone access for desktop apps in Windows Settings. Clipboard output supports Unicode, and `--paste` uses native Windows key input (default `ctrl+v`).
+
+`ostt launch -c` opens a Windows console without a shell wrapper. Run it again to stop and transcribe the active recording. Windows uses the `console` popup terminal; popup geometry and decoration settings are managed by the console host. Bind the command using your preferred shortcut tool.
+
+Configuration is stored in `%APPDATA%\ostt\ostt.toml`; models, recordings, history, and logs are in `%LOCALAPPDATA%\ostt`. Explicit `XDG_*` directory overrides still apply. `ostt daemon start/stop/status` uses a local named pipe restricted to your Windows user. For startup at login, configure `ostt daemon run` in Task Scheduler; `daemon install/uninstall` reports that automatic Windows service installation is unavailable.
+
+For source builds, install Rust with the MSVC toolchain, Visual Studio 2022 C++ Build Tools, CMake, and LLVM. The locked CMake dependency currently requires Visual Studio 2022. Set `LIBCLANG_PATH` to LLVM's `bin` directory, then run `cargo build --locked --release`. Bash processing actions additionally require `sh.exe` on `PATH`, such as Git for Windows' `usr\bin`; ordinary recording and transcription use native Windows support.
+
+Source builds generate Whisper bindings for the target platform and require libclang. On Linux, install your distribution's Clang development package; on macOS, use Xcode's command-line tools.
 
 ## Quick Start
 

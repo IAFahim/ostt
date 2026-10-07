@@ -140,10 +140,21 @@ jobs:
         run: |
           ${{ matrix.packages_install }}
       - name: Build artifacts
+        # bindgen needs the LLVM shared library when building Whisper on Windows.
+        # The Windows system dependencies above install LLVM with Chocolatey.
+        if: ${{ runner.os != 'Windows' }}
         run: |
           # Actually do builds and make zips and whatnot
           dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
           echo "dist ran successfully"
+      - name: Build Windows artifacts
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: |
+          dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - id: cargo-dist
         name: Post-build
         # We force bash here just because github makes it really hard to get values up
@@ -238,7 +249,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev clang
       - name: Install cargo-deb
         run: cargo install cargo-deb
       - name: Install cargo-generate-rpm
@@ -335,7 +346,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev clang
       - name: Install CUDA toolkit
         run: |
           wget -qO /tmp/cuda-keyring.deb \
@@ -550,7 +561,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev clang
       - name: Install Vulkan SDK
         run: |
           sudo apt-get install -y libvulkan-dev glslang-tools glslc

@@ -1,7 +1,7 @@
 //! Launch ostt in a popup terminal window.
 //!
 //! Spawns a terminal emulator with ostt running inside it. If an ostt instance
-//! is already running, sends SIGUSR1 to finish recording instead of spawning
+//! is already running, requests transcription to finish recording instead of spawning
 //! a new instance.
 
 use anyhow::{anyhow, Context};
@@ -12,8 +12,12 @@ use crate::notifier::notify_error;
 use crate::recording::active;
 
 const LAUNCH_FAILURE_TITLE: &str = "OSTT popup launch failed";
+#[cfg(not(windows))]
 const TERMINAL_SETUP_GUIDANCE: &str =
     "Install a supported terminal such as Ghostty, kitty, or Alacritty, or set [popup].terminal in ~/.config/ostt/ostt.toml.";
+#[cfg(windows)]
+const TERMINAL_SETUP_GUIDANCE: &str =
+    "Use the built-in Windows console with [popup].terminal = 'console' in %APPDATA%\\ostt\\ostt.toml.";
 const POPUP_CONTEXT_ENV: &str = "OSTT_POPUP";
 const POPUP_CONTEXT_VALUE: &str = "1";
 
@@ -27,6 +31,8 @@ fn shell_quote(s: &str) -> String {
 /// Supported terminal emulators.
 #[derive(Debug, Clone, Copy)]
 enum TerminalEmulator {
+    #[cfg(windows)]
+    WindowsConsole,
     Ghostty,
     Kitty,
     Alacritty,
@@ -54,6 +60,8 @@ impl TerminalEmulator {
     /// Returns the command name for this terminal.
     fn command_name(&self) -> &'static str {
         match self {
+            #[cfg(windows)]
+            Self::WindowsConsole => "console",
             Self::Ghostty => "ghostty",
             Self::Kitty => "kitty",
             Self::Alacritty => "alacritty",
@@ -66,35 +74,55 @@ impl TerminalEmulator {
 
     /// Try to find this terminal on the system.
     fn find_binary(&self) -> Option<String> {
-        // macOS automation contexts such as Shortcuts often use a minimal PATH.
-        let app_path = match self {
-            Self::Ghostty => Some("/Applications/Ghostty.app/Contents/MacOS/ghostty"),
-            Self::Kitty => Some("/Applications/kitty.app/Contents/MacOS/kitty"),
-            _ => None,
-        };
-        if let Some(app_path) = app_path {
-            if std::path::Path::new(app_path).exists() {
-                return Some(app_path.to_string());
+        #[cfg(windows)]
+        {
+            if matches!(self, Self::WindowsConsole) {
+                return std::env::var_os("SystemRoot").map(|root| {
+                    std::path::PathBuf::from(root)
+                        .join("System32")
+                        .join("conhost.exe")
+                        .to_string_lossy()
+                        .into_owned()
+                });
             }
+            crate::recording::ffmpeg::find_in_path(self.command_name())
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
         }
+        #[cfg(not(windows))]
+        {
+            // macOS automation contexts such as Shortcuts often use a minimal PATH.
+            let app_path = match self {
+                Self::Ghostty => Some("/Applications/Ghostty.app/Contents/MacOS/ghostty"),
+                Self::Kitty => Some("/Applications/kitty.app/Contents/MacOS/kitty"),
+                _ => None,
+            };
+            if let Some(app_path) = app_path {
+                if std::path::Path::new(app_path).exists() {
+                    return Some(app_path.to_string());
+                }
+            }
 
-        // Check PATH via `which`
-        let output = Command::new("which")
-            .arg(self.command_name())
-            .output()
-            .ok()?;
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(path);
+            // Check PATH via `which`
+            let output = Command::new("which")
+                .arg(self.command_name())
+                .output()
+                .ok()?;
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Some(path);
+                }
             }
+            None
         }
-        None
     }
 
     /// Parse a terminal name from config string.
     fn from_name(name: &str) -> Option<Self> {
         match name.to_lowercase().as_str() {
+            #[cfg(windows)]
+            "console" | "conhost" => Some(Self::WindowsConsole),
             "ghostty" => Some(Self::Ghostty),
             "kitty" => Some(Self::Kitty),
             "alacritty" => Some(Self::Alacritty),
@@ -109,6 +137,8 @@ impl TerminalEmulator {
     /// Detection order: preferred terminals first, then platform defaults as fallbacks.
     fn detection_order() -> &'static [Self] {
         &[
+            #[cfg(windows)]
+            Self::WindowsConsole,
             // Preferred: modern, feature-rich terminals
             Self::Ghostty,
             Self::Kitty,
@@ -123,6 +153,9 @@ impl TerminalEmulator {
 }
 
 fn unsupported_terminal_message(name: &str) -> String {
+    #[cfg(windows)]
+    return format!("Unsupported terminal '{name}'. {TERMINAL_SETUP_GUIDANCE}");
+    #[cfg(not(windows))]
     format!(
         "Unsupported terminal '{name}'. {TERMINAL_SETUP_GUIDANCE} Supported terminals: ghostty, kitty, alacritty, foot, konsole, gnome-terminal, xfce4-terminal."
     )
@@ -185,6 +218,11 @@ fn build_spawn_command(program: &str, args: &[String]) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE);
+    }
     command
 }
 
@@ -219,6 +257,12 @@ fn build_terminal_args_for_platform(
     ostt_args: &[String],
 ) -> Vec<String> {
     match terminal {
+        #[cfg(windows)]
+        TerminalEmulator::WindowsConsole => {
+            let mut args = vec![binary.to_string(), ostt_bin.to_string()];
+            args.extend(ostt_args.iter().cloned());
+            args
+        }
         TerminalEmulator::Ghostty => {
             // Ghostty uses a shell wrapper to source profile for PATH
             // (needed for bash processing actions that invoke external tools)
@@ -368,7 +412,7 @@ fn build_terminal_args_for_platform(
 
 /// Handles the `ostt launch` command.
 ///
-/// If an ostt recorder is already running, sends SIGUSR1
+/// If an ostt recorder is already running, signals the active recorder
 /// to finish recording. Otherwise, spawns a new terminal window with ostt.
 pub async fn handle_launch(
     config: &crate::config::OsttConfig,
@@ -516,11 +560,37 @@ mod tests {
             terminal_not_found_message("ghostty"),
             no_terminal_found_message(),
         ] {
+            #[cfg(not(windows))]
             assert!(message
                 .contains("Install a supported terminal such as Ghostty, kitty, or Alacritty"));
             assert!(message.contains("[popup].terminal"));
+            #[cfg(not(windows))]
             assert!(message.contains("~/.config/ostt/ostt.toml"));
+            #[cfg(windows)]
+            assert!(message.contains("%APPDATA%\\ostt\\ostt.toml"));
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_launch_preserves_executable_and_argument_boundaries() {
+        let executable = r"C:\Program Files\OSTT\ostt.exe";
+        let args = build_terminal_args(
+            TerminalEmulator::WindowsConsole,
+            "conhost.exe",
+            &PopupConfig::default(),
+            executable,
+            &["-o".into(), "transcript & notes.txt".into()],
+        );
+        // The host receives literal arguments; paths never become shell commands.
+        assert_eq!(
+            args,
+            ["conhost.exe", executable, "-o", "transcript & notes.txt"]
+        );
+        assert!(matches!(
+            TerminalEmulator::detection_order()[0],
+            TerminalEmulator::WindowsConsole
+        ));
     }
 
     #[test]

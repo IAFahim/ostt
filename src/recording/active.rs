@@ -1,7 +1,13 @@
-use anyhow::{anyhow, Context};
+#[cfg(unix)]
+use anyhow::anyhow;
+use anyhow::Context;
+#[cfg(unix)]
 use signal_hook::consts::SIGUSR1;
+#[cfg(unix)]
 use signal_hook::low_level::unregister;
+#[cfg(unix)]
 use signal_hook::SigId;
+#[cfg(unix)]
 use std::process::Command;
 use std::sync::{atomic::AtomicBool, Arc};
 
@@ -14,6 +20,7 @@ struct RecordingPidGuard {
     path: std::path::PathBuf,
 }
 
+#[cfg(unix)]
 struct SignalGuard {
     id: SigId,
 }
@@ -34,6 +41,7 @@ impl Drop for RecordingPidGuard {
     }
 }
 
+#[cfg(unix)]
 impl Drop for SignalGuard {
     fn drop(&mut self) {
         unregister(self.id);
@@ -55,6 +63,7 @@ pub(crate) fn find_running_recorder() -> Option<u32> {
     }
 }
 
+#[cfg(unix)]
 pub(crate) fn signal_running_recorder(pid: u32) -> anyhow::Result<()> {
     tracing::debug!("Sending SIGUSR1 to ostt PID {}", pid);
 
@@ -85,6 +94,7 @@ fn write_recording_pid_file() -> anyhow::Result<RecordingPidGuard> {
     Ok(RecordingPidGuard { path })
 }
 
+#[cfg(unix)]
 fn register_transcription_signal(term: Arc<AtomicBool>) -> anyhow::Result<SignalGuard> {
     let id = signal_hook::flag::register(SIGUSR1, term)?;
     Ok(SignalGuard { id })
@@ -94,9 +104,18 @@ fn is_recording_process(pid: u32) -> bool {
     pid != std::process::id() && process_exists(pid)
 }
 
+#[cfg(unix)]
 fn process_exists(pid: u32) -> bool {
     Command::new("kill")
         .args(["-0", &pid.to_string()])
         .status()
         .is_ok_and(|status| status.success())
 }
+
+#[cfg(windows)]
+#[path = "active_windows.rs"]
+mod windows;
+#[cfg(windows)]
+pub(crate) use windows::signal_running_recorder;
+#[cfg(windows)]
+use windows::{process_exists, register_transcription_signal, SignalGuard};

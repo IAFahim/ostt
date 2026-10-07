@@ -12,14 +12,19 @@
 //! # Logs
 //! Daemon activity is written to the regular OSTT logs. Use `ostt logs` to inspect it.
 
+#[cfg(not(windows))]
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
+#[cfg(not(windows))]
+use anyhow::Context;
 
 use crate::config::OsttConfig;
 use crate::transcription::daemon_client::{ensure_daemon, probe_daemon, shutdown_daemon};
-use crate::transcription::local_models::{daemon_pid_path, daemon_socket_path};
+use crate::transcription::local_models::daemon_pid_path;
+#[cfg(not(windows))]
+use crate::transcription::local_models::daemon_socket_path;
 
 // ── Internal run command ──────────────────────────────────────────────────────
 
@@ -97,7 +102,10 @@ pub async fn handle_daemon_status(config: &OsttConfig) -> anyhow::Result<()> {
             if let Some(p) = pid {
                 println!("PID:     {p}");
             }
+            #[cfg(not(windows))]
             println!("Socket:  {}", daemon_socket_path().display());
+            #[cfg(windows)]
+            println!("Transport: local named pipe");
             let mismatch = active.as_deref().is_some_and(|m| m != d.model_id);
             if mismatch {
                 println!(
@@ -116,16 +124,21 @@ pub async fn handle_daemon_status(config: &OsttConfig) -> anyhow::Result<()> {
         }
     }
 
-    let service_path = service_file_path();
-    let installed = service_path.exists();
-    println!(
-        "Service: {}",
-        if installed {
-            format!("installed ({})", service_path.display())
-        } else {
-            "not installed".to_string()
-        }
-    );
+    #[cfg(not(windows))]
+    {
+        let service_path = service_file_path();
+        let installed = service_path.exists();
+        println!(
+            "Service: {}",
+            if installed {
+                format!("installed ({})", service_path.display())
+            } else {
+                "not installed".to_string()
+            }
+        );
+    }
+    #[cfg(windows)]
+    println!("Service: configure Task Scheduler for startup at login");
 
     println!("Log:     ostt logs");
 
@@ -133,6 +146,7 @@ pub async fn handle_daemon_status(config: &OsttConfig) -> anyhow::Result<()> {
 }
 
 /// Install the daemon as a system service (launchd on macOS, systemd on Linux).
+#[cfg(not(windows))]
 pub fn handle_daemon_install() -> anyhow::Result<()> {
     let exe = std::env::current_exe().context("could not determine ostt executable path")?;
 
@@ -182,6 +196,7 @@ pub fn handle_daemon_install() -> anyhow::Result<()> {
 }
 
 /// Remove the daemon system service.
+#[cfg(not(windows))]
 pub fn handle_daemon_uninstall() -> anyhow::Result<()> {
     let service_path = service_file_path();
     if !service_path.exists() {
@@ -220,6 +235,16 @@ pub fn handle_daemon_uninstall() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+pub fn handle_daemon_install() -> anyhow::Result<()> {
+    anyhow::bail!("Automatic daemon service installation is not supported on Windows. Use 'ostt daemon start', or configure 'ostt daemon run' in Task Scheduler.");
+}
+
+#[cfg(windows)]
+pub fn handle_daemon_uninstall() -> anyhow::Result<()> {
+    anyhow::bail!("Automatic daemon service installation is not supported on Windows. Use 'ostt daemon stop' and remove any Task Scheduler task you configured.");
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn active_local_model() -> Option<String> {
@@ -252,6 +277,7 @@ fn read_pid_file() -> Option<u32> {
         .and_then(|s| s.trim().parse().ok())
 }
 
+#[cfg(not(windows))]
 fn service_file_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {

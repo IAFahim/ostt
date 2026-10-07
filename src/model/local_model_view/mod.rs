@@ -801,7 +801,7 @@ fn delete_confirmed_entry(
 }
 
 fn stop_daemon_for_deleted_model(model_id: &str) {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let model_id = model_id.to_string();
         tokio::spawn(async move {

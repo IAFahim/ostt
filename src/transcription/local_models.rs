@@ -949,7 +949,7 @@ mod tests {
     }
 
     #[test]
-    fn models_dir_defaults_to_home_local_share() {
+    fn models_dir_uses_platform_default_when_xdg_is_unset() {
         let _guard = test_env_lock();
         let previous_home = env::var_os("HOME");
         let previous_xdg_config_home = env::var_os("XDG_CONFIG_HOME");
@@ -964,13 +964,18 @@ mod tests {
         env::set_var("XDG_CONFIG_HOME", home.join(".config"));
         env::remove_var("XDG_DATA_HOME");
 
-        assert_eq!(
-            models_dir(),
-            home.join(".local")
-                .join("share")
-                .join("ostt")
-                .join("models")
-        );
+        #[cfg(windows)]
+        let expected = dirs::data_local_dir()
+            .expect("Windows local application data directory")
+            .join("ostt")
+            .join("models");
+        #[cfg(not(windows))]
+        let expected = home
+            .join(".local")
+            .join("share")
+            .join("ostt")
+            .join("models");
+        assert_eq!(models_dir(), expected);
 
         if let Some(previous_home) = previous_home {
             env::set_var("HOME", previous_home);
@@ -1132,6 +1137,23 @@ mod tests {
 
             assert_eq!(selected.provider_id, "whisper");
             assert_eq!(selected.model_id, "custom");
+        });
+    }
+
+    #[test]
+    fn selected_model_allows_missing_config_but_reports_invalid_config() {
+        with_isolated_data_dir(|_| {
+            let path = crate::app_dirs::config_path().expect("isolated config path");
+            assert!(!path.exists());
+            assert!(config::get_selected_model_entry()
+                .expect("missing config means no model has been selected")
+                .is_none());
+
+            fs::write(path, "invalid TOML").expect("write invalid config");
+            assert!(
+                config::get_selected_model_entry().is_err(),
+                "configuration errors must not be mistaken for absent selection"
+            );
         });
     }
 

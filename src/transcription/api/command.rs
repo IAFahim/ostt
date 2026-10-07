@@ -22,6 +22,8 @@ pub(super) async fn transcribe(
     tracing::debug!("External command transcription: {expanded}");
 
     let mut process = shell_command(&expanded);
+    #[cfg(windows)]
+    process.env("OSTT_EXTERNAL_AUDIO_PATH", audio_path);
     process.kill_on_drop(true);
     let child = process
         .stdout(Stdio::piped())
@@ -62,9 +64,16 @@ pub(super) async fn transcribe(
     Ok(transcript)
 }
 
+#[cfg(unix)]
 fn shell_quote_path(path: &Path) -> String {
     let value = path.to_string_lossy();
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(windows)]
+fn shell_quote_path(_path: &Path) -> String {
+    // cmd expands variables once. Keep path characters out of the command source.
+    "\"%OSTT_EXTERNAL_AUDIO_PATH%\"".to_string()
 }
 
 #[cfg(unix)]
@@ -76,8 +85,10 @@ fn shell_command(command: &str) -> Command {
 
 #[cfg(windows)]
 fn shell_command(command: &str) -> Command {
-    let mut process = Command::new("cmd");
-    process.arg("/C").arg(command);
+    let mut process = Command::new("cmd.exe");
+    process.args(["/D", "/V:OFF", "/S", "/C"]);
+    // cmd uses its own quoting rules, rather than the C runtime's argument rules.
+    process.raw_arg(format!("\"{command}\""));
     process
 }
 
@@ -85,10 +96,51 @@ fn shell_command(command: &str) -> Command {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn shell_quote_path_preserves_spaces_and_quotes() {
         let quoted = shell_quote_path(Path::new("/tmp/audio file's clip.mp3"));
 
         assert_eq!(quoted, "'/tmp/audio file'\\''s clip.mp3'");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_audio_path_preserves_spaces_and_shell_characters() {
+        let path = Path::new(r"C:\audio files\clip's %PATH% !OSTT! & | (sample).mp3");
+        let command = format!("echo {}", shell_quote_path(path));
+        let output = shell_command(&command)
+            .env("OSTT_EXTERNAL_AUDIO_PATH", path)
+            .output()
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        // cmd echo retains quotes; the path must remain literal, not expand PATH.
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim(),
+            format!("\"{}\"", path.display())
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_external_command_reads_the_quoted_audio_file() {
+        let dir =
+            std::env::temp_dir().join(format!("ostt_external_command_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("音声 clip's %PATH% ! & (sample).mp3");
+        std::fs::write(&path, b"expected transcript").unwrap();
+        let output = shell_command(&format!("type {}", shell_quote_path(&path)))
+            .env("OSTT_EXTERNAL_AUDIO_PATH", &path)
+            .output()
+            .await
+            .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"expected transcript");
     }
 }

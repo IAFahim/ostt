@@ -49,21 +49,35 @@ pub fn find_ffmpeg() -> Result<PathBuf> {
 }
 
 /// Searches for a binary in the system PATH.
-fn find_in_path(binary_name: &str) -> Result<PathBuf> {
-    let output = std::process::Command::new("which")
-        .arg(binary_name)
-        .output()
-        .map_err(|e| anyhow!("failed to search PATH for {binary_name}: {e}"))?;
-
-    if output.status.success() {
-        let path_str = String::from_utf8_lossy(&output.stdout);
-        let path = PathBuf::from(path_str.trim());
-        if !path.as_os_str().is_empty() {
-            return Ok(path);
+pub(crate) fn find_in_path(binary_name: &str) -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        for directory in std::env::split_paths(&path) {
+            let candidate = directory.join(format!("{binary_name}.exe"));
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
+        Err(anyhow!(missing_ffmpeg_message()))
     }
+    #[cfg(not(windows))]
+    {
+        let output = std::process::Command::new("which")
+            .arg(binary_name)
+            .output()
+            .map_err(|e| anyhow!("failed to search PATH for {binary_name}: {e}"))?;
 
-    Err(anyhow!(missing_ffmpeg_message()))
+        if output.status.success() {
+            let path_str = String::from_utf8_lossy(&output.stdout);
+            let path = PathBuf::from(path_str.trim());
+            if !path.as_os_str().is_empty() {
+                return Ok(path);
+            }
+        }
+
+        Err(anyhow!(missing_ffmpeg_message()))
+    }
 }
 
 fn missing_ffmpeg_message() -> String {
@@ -75,6 +89,8 @@ fn current_os() -> &'static str {
         "macos"
     } else if cfg!(target_os = "linux") {
         "linux"
+    } else if cfg!(windows) {
+        "windows"
     } else {
         "other"
     }
@@ -101,6 +117,7 @@ fn missing_ffmpeg_message_for(os: &str, homebrew_available: bool) -> String {
         }
         "macos" => "ffmpeg not found. Install Homebrew from https://brew.sh, then run: brew install ffmpeg.".to_string(),
         "linux" => "ffmpeg not found. Install it with your package manager, for example: sudo apt install ffmpeg, sudo dnf install ffmpeg, or sudo pacman -S ffmpeg.".to_string(),
+        "windows" => "ffmpeg not found. Install it with winget install Gyan.FFmpeg, ensure ffmpeg.exe is on PATH, and reopen your terminal.".to_string(),
         _ => "ffmpeg not found. Install ffmpeg from https://ffmpeg.org/download.html, then retry.".to_string(),
     }
 }
@@ -116,6 +133,14 @@ mod tests {
             Ok(path) => println!("Found ffmpeg at: {}", path.display()),
             Err(e) => println!("ffmpeg not found (expected on CI): {e}"),
         }
+    }
+
+    #[test]
+    fn windows_missing_ffmpeg_message_explains_install_and_path_refresh() {
+        let message = missing_ffmpeg_message_for("windows", false);
+        assert!(message.contains("winget install Gyan.FFmpeg"));
+        assert!(message.contains("PATH"));
+        assert!(message.contains("reopen your terminal"));
     }
 
     #[test]

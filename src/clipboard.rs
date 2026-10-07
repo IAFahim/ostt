@@ -1,12 +1,15 @@
 //! Clipboard utilities for ostt.
 //!
-//! Handles copying transcribed text to system clipboard using pbcopy (macOS), wl-copy (Wayland), or xclip (X11).
+//! Handles Unicode clipboard access on Windows, pbcopy (macOS), wl-copy (Wayland), or xclip (X11).
 
+#[cfg(not(windows))]
 use anyhow::Context;
+#[cfg(not(windows))]
 use std::io::Write;
+#[cfg(not(windows))]
 use std::process::{Command, Stdio};
 
-/// Copies text to system clipboard using pbcopy (macOS), wl-copy (Wayland/Hyprland), or xclip (X11).
+/// Copies text using the Windows clipboard, pbcopy (macOS), wl-copy (Wayland), or xclip (X11).
 ///
 /// # Errors
 /// - If no clipboard tool is available or the selected backend fails.
@@ -15,12 +18,18 @@ pub fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
 }
 
 pub(crate) fn read_clipboard() -> anyhow::Result<String> {
+    #[cfg(windows)]
+    {
+        clipboard_win::get_clipboard_string()
+            .map_err(|error| anyhow::anyhow!("Failed to read Windows Unicode clipboard: {error}"))
+    }
+
     #[cfg(target_os = "macos")]
     {
         read_command("pbpaste", &[])
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         if std::env::var("WAYLAND_DISPLAY").is_ok() {
             if let Ok(text) = read_command("wl-paste", &["--no-newline"]) {
@@ -33,12 +42,18 @@ pub(crate) fn read_clipboard() -> anyhow::Result<String> {
 }
 
 pub(crate) fn set_clipboard(text: &str) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        clipboard_win::set_clipboard_string(text)
+            .map_err(|error| anyhow::anyhow!("Failed to write Windows Unicode clipboard: {error}"))
+    }
+
     #[cfg(target_os = "macos")]
     {
         write_command("pbcopy", &[], text)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         if std::env::var("WAYLAND_DISPLAY").is_ok()
             && write_command("wl-copy", &["--type", "text/plain", "--trim-newline"], text).is_ok()
@@ -50,6 +65,7 @@ pub(crate) fn set_clipboard(text: &str) -> anyhow::Result<()> {
     }
 }
 
+#[cfg(not(windows))]
 fn read_command(program: &str, args: &[&str]) -> anyhow::Result<String> {
     let output = Command::new(program)
         .args(args)
@@ -61,6 +77,7 @@ fn read_command(program: &str, args: &[&str]) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+#[cfg(not(windows))]
 fn write_command(program: &str, args: &[&str], text: &str) -> anyhow::Result<()> {
     let mut child = Command::new(program)
         .args(args)

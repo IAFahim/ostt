@@ -1,7 +1,7 @@
 //! Local model daemon server.
 //!
-//! Loads a `WhisperContext` once and serves transcription requests over a Unix
-//! domain socket until the idle timeout expires. Each message is framed with a
+//! Loads a `WhisperContext` once and serves transcription requests over platform-local
+//! IPC until the idle timeout expires. Each message is framed with a
 //! 4-byte little-endian length prefix followed by UTF-8 JSON.
 //!
 //! Request variants (JSON `"type"` field):
@@ -16,10 +16,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::ipc::{self, Server};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream};
 use tokio::time::timeout;
 
 use crate::config::LocalTranscriptionConfig;
@@ -115,7 +115,9 @@ pub async fn run(model_id: &str, idle_timeout_secs: Option<u64>) -> anyhow::Resu
     let ctx = Arc::new(ctx);
 
     // Bind socket.
-    let listener = UnixListener::bind(&socket_path).context("Failed to bind daemon socket")?;
+    let listener = ipc::bind().context("Failed to bind daemon IPC")?;
+    #[cfg(windows)]
+    let mut listener = listener;
 
     // Write PID file.
     std::fs::write(&pid_path, std::process::id().to_string())?;
@@ -175,7 +177,7 @@ pub async fn run(model_id: &str, idle_timeout_secs: Option<u64>) -> anyhow::Resu
 
 /// Returns `Ok(true)` to signal the daemon should shut down.
 async fn handle_connection(
-    mut stream: UnixStream,
+    mut stream: Server,
     model_id: &str,
     ctx: Arc<WhisperContext>,
 ) -> anyhow::Result<bool> {
@@ -291,7 +293,7 @@ async fn run_inference(
 
 // ── Framing helpers ───────────────────────────────────────────────────────────
 
-async fn read_framed(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {
+async fn read_framed(stream: &mut Server) -> anyhow::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
     let len = u32::from_le_bytes(len_buf) as usize;
@@ -300,7 +302,7 @@ async fn read_framed(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {
     Ok(buf)
 }
 
-async fn write_framed(stream: &mut UnixStream, resp: &Response) -> anyhow::Result<()> {
+async fn write_framed(stream: &mut Server, resp: &Response) -> anyhow::Result<()> {
     let payload = serde_json::to_vec(resp)?;
     let len = payload.len() as u32;
     stream.write_all(&len.to_le_bytes()).await?;

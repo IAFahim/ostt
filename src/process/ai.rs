@@ -463,24 +463,23 @@ mod tests {
 
     #[tokio::test]
     async fn non_zero_exit_returns_error_with_stderr() {
-        // Use `bash` as the tool binary with `-c` to run a script that writes to
-        // stderr and exits non-zero. The required args from `build_required_args` are
-        // passed before our extra args, but `bash -c` uses only the first `-c` arg
-        // as the script and ignores the rest (they become positional params $0, $1...).
-        // We must ensure `-c` and the script come first, so we use them as tool_binary
-        // args via a wrapper: `bash` as binary, then the extra args include `-c` and
-        // the command. But required args are prepended. Solution: use `env` which passes
-        // through args — no, that has the same issue.
-        //
-        // Simplest approach: directly use a script path. We create a tiny shell script.
-        let dir = std::env::temp_dir().join("ostt_test_ai_nonzero");
+        let dir = std::env::temp_dir().join(format!("ostt_test_ai_nonzero_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let script_path = dir.join("fail.sh");
-        std::fs::write(
-            &script_path,
-            "#!/bin/sh\necho 'custom error output' >&2\nexit 1\n",
-        )
-        .unwrap();
+        // Both scripts must consume stdin (like `more > nul` below) before
+        // exiting; otherwise the prompt write can race the child's exit and
+        // surface as EPIPE instead of the non-zero exit status under test.
+        #[cfg(unix)]
+        let (filename, script) = (
+            "fail.sh",
+            "#!/bin/sh\ncat > /dev/null\necho 'custom error output' >&2\nexit 1\n",
+        );
+        #[cfg(windows)]
+        let (filename, script) = (
+            "fail.cmd",
+            "@echo off\r\nif \"%1\"==\"--version\" (echo 1.4.3 & exit /b 0)\r\nmore > nul\r\necho custom error output >&2\r\nexit /b 1\r\n",
+        );
+        let script_path = dir.join(filename);
+        std::fs::write(&script_path, script).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Native Windows support: recording and transcription, Unicode clipboard and paste, popup recording toggles, local daemon named pipes, replay through the default audio app, Windows release archives, and a PowerShell installer. Automatic daemon service installation remains available only on Linux and macOS.
+
 ## 0.0.27 - 2026-09-24
 
 ### Added

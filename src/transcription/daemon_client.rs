@@ -9,15 +9,17 @@
 use std::path::Path;
 use std::time::Duration;
 
+use super::ipc::{self, Client};
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
 use tokio::time::{sleep, timeout};
 
 use crate::config::LocalTranscriptionConfig;
 
-use super::local_models::daemon_socket_path;
+#[cfg(windows)]
+#[path = "daemon_spawn_windows.rs"]
+mod windows_spawn;
 
 // ── Protocol types ────────────────────────────────────────────────────────────
 
@@ -54,7 +56,7 @@ pub struct DaemonInfo {
 
 /// Probe the daemon. Returns `Some(DaemonInfo)` when it is reachable.
 pub async fn probe_daemon() -> Option<DaemonInfo> {
-    let mut stream = UnixStream::connect(daemon_socket_path()).await.ok()?;
+    let mut stream = ipc::connect().await.ok()?;
     let resp = timeout(Duration::from_secs(2), send(&mut stream, &Request::Ping))
         .await
         .ok()??;
@@ -100,7 +102,7 @@ pub async fn request_transcription(
     let audio_path_str = audio_path
         .to_str()
         .ok_or_else(|| anyhow!("audio path is not valid UTF-8"))?;
-    let mut stream = UnixStream::connect(daemon_socket_path())
+    let mut stream = ipc::connect()
         .await
         .context("could not connect to daemon socket")?;
     let resp = timeout(
@@ -125,7 +127,7 @@ pub async fn request_transcription(
 
 /// Ask the daemon to shut down gracefully. Ignores errors (daemon may not be running).
 pub async fn shutdown_daemon() -> anyhow::Result<()> {
-    let Ok(mut stream) = UnixStream::connect(daemon_socket_path()).await else {
+    let Ok(mut stream) = ipc::connect().await else {
         return Ok(());
     };
     let _ = timeout(
@@ -151,6 +153,9 @@ pub(crate) fn spawn_daemon_process(
         args.push("--idle-timeout-secs");
         args.push(&timeout_str);
     }
+    #[cfg(windows)]
+    windows_spawn::spawn_detached(&exe, &args).context("failed to spawn daemon process")?;
+    #[cfg(not(windows))]
     std::process::Command::new(&exe)
         .args(&args)
         .stdin(std::process::Stdio::null())
@@ -179,7 +184,7 @@ async fn wait_for_daemon(model_id: &str, deadline: Duration) -> anyhow::Result<(
     }
 }
 
-async fn send<'a>(stream: &mut UnixStream, req: &Request<'a>) -> Option<Response> {
+async fn send<'a>(stream: &mut Client, req: &Request<'a>) -> Option<Response> {
     let payload = serde_json::to_vec(req).ok()?;
     let len = payload.len() as u32;
     stream.write_all(&len.to_le_bytes()).await.ok()?;

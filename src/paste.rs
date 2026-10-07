@@ -8,6 +8,7 @@ use std::time::Duration;
 
 #[cfg(any(target_os = "macos", test))]
 const MACOS_ACCESSIBILITY_REMEDIATION: &str = "Grant accessibility permissions to your terminal app or OSTT launcher in System Settings > Privacy & Security > Accessibility.";
+#[cfg(not(windows))]
 const POPUP_TITLE: &str = "ostt";
 
 #[cfg(target_os = "macos")]
@@ -21,7 +22,7 @@ pub(crate) fn wait_for_focus_after_popup(config: &PasteConfig) {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         use std::time::Instant;
 
@@ -159,7 +160,7 @@ where
     set_clipboard(text).context("failed to copy text to clipboard for paste")?;
     tracing::debug!("Paste mode: copied {} bytes to clipboard", text.len());
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     log_active_window("before paste key");
     if let Err(err) = send_paste_key(&config.paste_key) {
         tracing::warn!("Failed to send paste key '{}': {err}", config.paste_key);
@@ -186,7 +187,9 @@ fn paste_key_failure_message(paste_key: &str) -> String {
 enum PasteKeyFailureContext {
     #[cfg(any(target_os = "macos", test))]
     Macos,
+    #[cfg(any(not(any(windows, target_os = "macos")), test))]
     GnomeWayland,
+    #[cfg(any(not(target_os = "macos"), test))]
     Other,
 }
 
@@ -194,30 +197,35 @@ fn paste_key_failure_message_for_context(
     paste_key: &str,
     context: PasteKeyFailureContext,
 ) -> String {
-    let mut message = format!(
+    let message = format!(
         "Failed to send paste key '{paste_key}'. Text was copied to the clipboard and will stay there so you can paste manually."
     );
     match context {
         #[cfg(any(target_os = "macos", test))]
         PasteKeyFailureContext::Macos => {
-            message.push_str("\nNext step: ");
-            message.push_str(MACOS_ACCESSIBILITY_REMEDIATION);
+            format!("{message}\nNext step: {MACOS_ACCESSIBILITY_REMEDIATION}")
         }
+        #[cfg(any(not(any(windows, target_os = "macos")), test))]
         PasteKeyFailureContext::GnomeWayland => {
-            message.push_str("\nGNOME Wayland does not support wtype or xdotool for native Wayland apps. Install ydotool and start ydotoold to enable auto-paste.");
+            format!("{message}\nGNOME Wayland does not support wtype or xdotool for native Wayland apps. Install ydotool and start ydotoold to enable auto-paste.")
         }
-        PasteKeyFailureContext::Other => {}
+        #[cfg(any(not(target_os = "macos"), test))]
+        PasteKeyFailureContext::Other => message,
     }
-    message
 }
 
 fn paste_key_failure_context() -> PasteKeyFailureContext {
+    #[cfg(windows)]
+    {
+        PasteKeyFailureContext::Other
+    }
+
     #[cfg(target_os = "macos")]
     {
         PasteKeyFailureContext::Macos
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         if is_gnome_wayland_session() {
             PasteKeyFailureContext::GnomeWayland
@@ -227,7 +235,7 @@ fn paste_key_failure_context() -> PasteKeyFailureContext {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn is_gnome_wayland_session() -> bool {
     if std::env::var("WAYLAND_DISPLAY").is_err() {
         return false;
@@ -276,8 +284,16 @@ fn detach_from_terminal_process_group(command: &mut Command) {
     command.process_group(0);
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn detach_from_terminal_process_group(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn detach_from_terminal_process_group(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+    command.creation_flags(CREATE_NO_WINDOW);
+}
 
 pub(crate) fn handle_paste_helper(config: &crate::config::OsttConfig) -> anyhow::Result<()> {
     let mut text = String::new();
@@ -290,7 +306,7 @@ pub(crate) fn handle_paste_helper(config: &crate::config::OsttConfig) -> anyhow:
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn log_active_window(label: &str) {
     if let Ok(output) = Command::new("hyprctl")
         .args(["activewindow", "-j"])
@@ -303,7 +319,7 @@ fn log_active_window(label: &str) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn active_hyprland_window_title() -> Option<String> {
     let output = Command::new("hyprctl")
         .args(["activewindow", "-j"])
@@ -321,12 +337,17 @@ fn active_hyprland_window_title() -> Option<String> {
 }
 
 fn send_paste_key(paste_key: &str) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        send_windows_key(paste_key)
+    }
+
     #[cfg(target_os = "macos")]
     {
         send_macos_key(paste_key)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         send_linux_key(paste_key)
     }
@@ -359,7 +380,131 @@ fn send_macos_key(paste_key: &str) -> anyhow::Result<()> {
     run_status(Command::new("osascript").args(["-e", &script]), "osascript")
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn windows_paste_keys(paste_key: &str) -> anyhow::Result<Vec<u16>> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        VkKeyScanW, VK_CONTROL, VK_INSERT, VK_LWIN, VK_MENU, VK_SHIFT,
+    };
+
+    let (modifiers, key) = parse_paste_key(paste_key)?;
+    let mut keys = Vec::new();
+    for modifier in modifiers {
+        let code = match modifier.as_str() {
+            "ctrl" => VK_CONTROL,
+            "shift" => VK_SHIFT,
+            "alt" => VK_MENU,
+            "cmd" | "super" => VK_LWIN,
+            _ => anyhow::bail!("Unsupported Windows paste modifier '{modifier}'"),
+        };
+        if !keys.contains(&code) {
+            keys.push(code);
+        }
+    }
+    let code = if key == "insert" {
+        VK_INSERT
+    } else {
+        let mut chars = key.encode_utf16();
+        let character = chars.next().context("Missing Windows paste key")?;
+        if chars.next().is_some() {
+            anyhow::bail!("Unsupported Windows paste key '{key}'");
+        }
+        // SAFETY: VkKeyScanW accepts a UTF-16 code unit and retains no memory.
+        let mapping = unsafe { VkKeyScanW(character) };
+        if mapping == -1 || (mapping as u16 >> 8) & !7 != 0 {
+            anyhow::bail!("Windows keyboard layout cannot map paste key '{key}'");
+        }
+        for (mask, modifier) in [(1, VK_SHIFT), (2, VK_CONTROL), (4, VK_MENU)] {
+            if (mapping as u16 >> 8) & mask != 0 && !keys.contains(&modifier) {
+                keys.push(modifier);
+            }
+        }
+        mapping as u16 & 0xff
+    };
+    keys.push(code);
+    Ok(keys)
+}
+
+#[cfg(windows)]
+fn windows_key_event(
+    key: u16,
+    release: bool,
+) -> windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key,
+                wScan: 0,
+                dwFlags: if release { KEYEVENTF_KEYUP } else { 0 }
+                    | if key == VK_INSERT || key == VK_LWIN {
+                        KEYEVENTF_EXTENDEDKEY
+                    } else {
+                        0
+                    },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+#[cfg(windows)]
+fn send_windows_key(paste_key: &str) -> anyhow::Result<()> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, SendInput, INPUT, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+
+    let keys = windows_paste_keys(paste_key)?;
+    // A recording hotkey may still be held when the popup closes. SendInput
+    // does not reset that state, so wait rather than alter the user's chord.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while [VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN]
+        .iter()
+        .any(|key| unsafe { GetAsyncKeyState(i32::from(*key)) } < 0)
+    {
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("Release Ctrl, Shift, Alt, and Windows keys before pasting. Text remains in the clipboard for manual paste.");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let inputs: Vec<_> = keys
+        .iter()
+        .map(|&key| windows_key_event(key, false))
+        .chain(keys.iter().rev().map(|&key| windows_key_event(key, true)))
+        .collect();
+    // SAFETY: inputs is a live array of initialized keyboard INPUT structures.
+    let sent = unsafe {
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        )
+    };
+    if sent != inputs.len() as u32 {
+        let error = std::io::Error::last_os_error();
+        if sent > 0 {
+            let releases: Vec<_> = keys
+                .iter()
+                .rev()
+                .map(|&key| windows_key_event(key, true))
+                .collect();
+            // SAFETY: As above; release keys after a partially injected chord.
+            unsafe {
+                SendInput(
+                    releases.len() as u32,
+                    releases.as_ptr(),
+                    std::mem::size_of::<INPUT>() as i32,
+                );
+            }
+        }
+        anyhow::bail!("Windows SendInput sent {sent}/{} events: {error}. The target app may have a higher privilege level than OSTT.", inputs.len());
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn send_linux_key(paste_key: &str) -> anyhow::Result<()> {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
         match send_wtype_key(paste_key) {
@@ -375,7 +520,7 @@ fn send_linux_key(paste_key: &str) -> anyhow::Result<()> {
     send_xdotool_key(paste_key)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn send_wtype_key(paste_key: &str) -> anyhow::Result<()> {
     let (modifiers, key) = parse_paste_key(paste_key)?;
     let key = linux_key_name(&key);
@@ -397,7 +542,7 @@ fn send_wtype_key(paste_key: &str) -> anyhow::Result<()> {
     run_status(Command::new("wtype").args(args), "wtype")
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn send_ydotool_key(paste_key: &str) -> anyhow::Result<()> {
     let (modifiers, key) = parse_paste_key(paste_key)?;
     let mut parts: Vec<String> = modifiers
@@ -412,7 +557,7 @@ fn send_ydotool_key(paste_key: &str) -> anyhow::Result<()> {
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn send_xdotool_key(paste_key: &str) -> anyhow::Result<()> {
     let (modifiers, key) = parse_paste_key(paste_key)?;
     let mut parts: Vec<String> = modifiers
@@ -443,7 +588,7 @@ fn parse_paste_key(paste_key: &str) -> anyhow::Result<(Vec<String>, String)> {
     ))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn linux_key_name(key: &str) -> String {
     if key == "insert" {
         "Insert".to_string()
@@ -452,7 +597,7 @@ fn linux_key_name(key: &str) -> String {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn wtype_modifier(modifier: &str) -> anyhow::Result<&'static str> {
     match modifier {
         "ctrl" => Ok("ctrl"),
@@ -464,7 +609,7 @@ fn wtype_modifier(modifier: &str) -> anyhow::Result<&'static str> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn xdotool_modifier(modifier: &str) -> anyhow::Result<&'static str> {
     match modifier {
         "ctrl" => Ok("ctrl"),
@@ -476,6 +621,7 @@ fn xdotool_modifier(modifier: &str) -> anyhow::Result<&'static str> {
     }
 }
 
+#[cfg(not(windows))]
 fn run_status(command: &mut Command, name: &str) -> anyhow::Result<()> {
     let status = command
         .stdout(Stdio::null())
@@ -492,6 +638,39 @@ fn run_status(command: &mut Command, name: &str) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paste_chords_map_modifiers_and_release_extended_keys() {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+
+        assert_eq!(
+            windows_paste_keys(" CTRL + v ").unwrap(),
+            vec![VK_CONTROL, b'V' as u16]
+        );
+        assert_eq!(
+            windows_paste_keys("shift+insert").unwrap(),
+            vec![VK_SHIFT, VK_INSERT]
+        );
+        assert_eq!(
+            windows_paste_keys("alt+cmd+super+insert").unwrap(),
+            vec![VK_MENU, VK_LWIN, VK_INSERT]
+        );
+        // SAFETY: windows_key_event initializes the keyboard member of INPUT.
+        let event = unsafe { windows_key_event(VK_INSERT, true).Anonymous.ki };
+        assert_eq!(event.dwFlags, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paste_rejects_unmappable_chords_before_injecting_input() {
+        assert!(windows_paste_keys("hyper+v")
+            .unwrap_err()
+            .to_string()
+            .contains("modifier"));
+        assert!(windows_paste_keys("ctrl+escape").is_err());
+        assert!(windows_paste_keys("v").is_err());
+    }
 
     #[test]
     fn paste_key_failure_returns_error_and_leaves_text_in_clipboard() {

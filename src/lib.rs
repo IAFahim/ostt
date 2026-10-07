@@ -31,5 +31,7 @@ pub mod setup;
 pub(crate) mod text;
 pub mod transcription;
 pub mod ui;
+#[cfg(windows)]
+pub(crate) mod windows_ipc;
 
 pub use app::run;

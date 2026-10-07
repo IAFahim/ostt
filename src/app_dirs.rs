@@ -1,4 +1,4 @@
-//! Application directory helpers following XDG Base Directory Specification.
+//! Application directory helpers using XDG paths or native Windows app data.
 //!
 //! All path construction for ostt's data, config, log, and runtime directories goes here.
 //! Callers should not build these paths inline.
@@ -12,12 +12,16 @@ fn home_dir() -> Option<PathBuf> {
         .or_else(dirs::home_dir)
 }
 
-/// Returns `~/.local/share/ostt` (XDG_DATA_HOME/ostt if set).
+/// Returns `~/.local/share/ostt`, or LocalAppData/ostt on Windows (XDG_DATA_HOME overrides either).
 ///
 /// This is where model files, recordings, history, and the daemon socket live.
 pub(crate) fn data_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         return PathBuf::from(xdg).join("ostt");
+    }
+    #[cfg(windows)]
+    if let Some(dir) = dirs::data_local_dir() {
+        return dir.join("ostt");
     }
     home_dir()
         .unwrap_or_else(|| PathBuf::from("~"))
@@ -33,10 +37,14 @@ pub(crate) fn recordings_dir() -> Result<PathBuf, anyhow::Error> {
     Ok(dir)
 }
 
-/// Returns `~/.config/ostt` (XDG_CONFIG_HOME/ostt if set).
+/// Returns `~/.config/ostt`, or RoamingAppData/ostt on Windows (XDG_CONFIG_HOME overrides either).
 pub(crate) fn config_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         return PathBuf::from(xdg).join("ostt");
+    }
+    #[cfg(windows)]
+    if let Some(dir) = dirs::config_dir() {
+        return dir.join("ostt");
     }
     home_dir()
         .unwrap_or_else(|| PathBuf::from("~"))
@@ -66,11 +74,15 @@ pub(crate) fn log_dir() -> Result<PathBuf, anyhow::Error> {
     let dir = if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
         PathBuf::from(xdg).join("ostt")
     } else {
-        home_dir()
+        #[cfg(windows)]
+        let state_dir = dirs::data_local_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine local data directory"))?;
+        #[cfg(not(windows))]
+        let state_dir = home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
             .join(".local")
-            .join("state")
-            .join("ostt")
+            .join("state");
+        state_dir.join("ostt")
     };
     std::fs::create_dir_all(&dir)?;
     Ok(dir)

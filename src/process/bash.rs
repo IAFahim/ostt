@@ -35,6 +35,10 @@ pub async fn execute_bash_action(command: &str, input: &str) -> anyhow::Result<S
         .spawn()
         .map_err(|e| {
             tracing::error!("Bash command failed to start: {e}");
+            #[cfg(windows)]
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return anyhow::anyhow!("Bash actions require sh.exe on PATH. Install Git Bash and add its usr\\bin directory to PATH: {e}");
+            }
             anyhow::anyhow!("Command failed to start: {e}. Make sure the command is installed.")
         })?;
 

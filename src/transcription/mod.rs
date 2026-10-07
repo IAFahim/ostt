@@ -15,6 +15,7 @@ pub mod api;
 pub(crate) mod context;
 pub mod daemon;
 pub mod daemon_client;
+mod ipc;
 pub mod local_models;
 pub mod model;
 pub mod provider;

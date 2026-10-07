@@ -1,6 +1,7 @@
 //! Replay a previous recording from history using the system audio player.
 
 use crate::recording::recording_history;
+#[cfg(not(windows))]
 use std::process::Command;
 
 /// Plays back a previous recording using the system's best available audio player.
@@ -42,6 +43,30 @@ pub async fn handle_replay(recording_index: Option<usize>) -> Result<(), anyhow:
     tracing::info!("Audio file path: {}", audio_path.display());
 
     // Platform-specific audio player invocation
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let path: Vec<u16> = audio_path
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                path.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        } as isize;
+        anyhow::ensure!(result > 32, "Failed to open the Windows audio player (error {result}). Set a default app for this audio format.");
+    }
     #[cfg(target_os = "macos")]
     {
         Command::new("open")

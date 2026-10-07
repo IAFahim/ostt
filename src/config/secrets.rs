@@ -190,7 +190,12 @@ pub fn clear_selected_model() -> anyhow::Result<()> {
 pub fn get_selected_model_entry() -> anyhow::Result<Option<SelectedModel>> {
     let config = match OsttConfig::load() {
         Ok(c) => c,
-        Err(e) if e.to_string().contains("No such file") => return Ok(None),
+        Err(e)
+            if e.downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(None);
+        }
         Err(e) => return Err(anyhow::anyhow!("{e}")),
     };
     let entry = match (

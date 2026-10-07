@@ -1,7 +1,7 @@
 //! Audio recording and transcription.
 //!
 //! Handles audio recording with real-time waveform visualization, optional transcription,
-//! and history management. Supports external triggers via SIGUSR1 signal.
+//! and history management. Supports external triggers via Unix signals or Windows events.
 
 use crate::config::{OsttConfig, ProcessAction, SelectedModel};
 use crate::history;
@@ -23,7 +23,7 @@ use std::sync::{
 /// Handles audio recording and optional transcription.
 ///
 /// Records audio with real-time waveform visualization, optionally transcribes the recording,
-/// and saves to history. Supports external triggers via SIGUSR1 signal.
+/// and saves to history. Supports external triggers via Unix signals or Windows events.
 pub async fn handle_record(
     config: &OsttConfig,
     clipboard: bool,
@@ -57,7 +57,7 @@ pub async fn handle_record(
     let actual_sample_rate = audio_recorder.sample_rate();
     tui.set_sample_rate(actual_sample_rate);
 
-    // External popup/launcher integrations use SIGUSR1 to finish the active recording.
+    // External popup/launcher integrations signal the active recorder to finish recording.
     let active_recording_guard =
         ActiveRecordingGuard::start(term.clone()).context("failed to mark recorder as active")?;
 
@@ -417,7 +417,7 @@ fn run_recording_loop(
         }
 
         if term.load(Ordering::Relaxed) {
-            tracing::debug!("Received SIGUSR1: transcribing via external trigger");
+            tracing::debug!("Received external trigger: transcribing");
             return Ok(true);
         }
 

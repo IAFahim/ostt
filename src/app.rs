@@ -69,13 +69,23 @@ async fn check_and_run_setup() -> Result<(), anyhow::Error> {
 fn load_config() -> anyhow::Result<crate::config::OsttConfig> {
     crate::config::OsttConfig::load().map_err(|err| {
         tracing::error!("Failed to load configuration: {err}");
-        anyhow!("Configuration error: {err}\nPlease check your ~/.config/ostt/ostt.toml file and try again.")
+        let path = crate::app_dirs::config_dir().join("ostt.toml");
+        anyhow!(
+            "Configuration error: {err}\nPlease check your {} file and try again.",
+            path.display()
+        )
     })
 }
 
 /// Package version plus the build-variant suffix (`-cuda`, `-cuda13`,
 /// `-vulkan`), assembled by `build.rs`.
 const VERSION: &str = env!("OSTT_VERSION");
+
+const CONFIGURATION_HELP: &str = if cfg!(windows) {
+    "CONFIGURATION:\n    Config file:        %APPDATA%\\ostt\\ostt.toml\n    Logs:               %LOCALAPPDATA%\\ostt\\ostt.log.*\n\nFor more information, visit: https://github.com/kristoferlund/ostt"
+} else {
+    "CONFIGURATION:\n    Config file:        ~/.config/ostt/ostt.toml\n    Logs:               ~/.local/state/ostt/ostt.log.*\n\nFor more information, visit: https://github.com/kristoferlund/ostt"
+};
 
 /// A terminal-based speech-to-text recorder with real-time waveform visualization
 #[derive(Parser)]
@@ -86,7 +96,7 @@ const VERSION: &str = env!("OSTT_VERSION");
     long_about = "\n\n┏┓┏╋╋ \n┗┛┛┗┗\n\nA terminal-based speech-to-text recorder with real-time waveform visualization\nand automatic transcription support.\n\nDEFAULT COMMAND:\n    If no command is specified, 'record' is used by default.\n    Record options (-c, -o) can be used without explicitly saying 'record'.\n\nEXAMPLES:\n    # Record and pipe to other command (default stdout)\n    $ ostt | grep word\n    $ ostt record | grep word\n    \n    # Record and copy to clipboard\n    $ ostt -c\n    $ ostt record -c\n    $ ostt -m deepgram/nova-3 -c\n    \n    # Record and write to file\n    $ ostt -o output.txt\n    $ ostt record -o output.txt\n    \n    # Retry most recent recording and pipe output\n    $ ostt retry | wc -w\n    \n    # Retry recording #2 and copy to clipboard\n    $ ostt retry 2 -c\n    \n    # Transcribe a pre-recorded audio file\n    $ ostt transcribe recording.ogg\n    $ ostt transcribe recording.ogg -m openai/gpt-4o-transcribe\n    \n    # Transcribe and copy to clipboard\n    $ ostt transcribe voice-memo.mp3 -c\n    \n    # Set up authentication for cloud providers\n    $ ostt auth\n    \n    # Choose cloud or local transcription model\n    $ ostt model\n    \n    # View your transcription history\n    $ ostt history\n    \n    # Manage transcription keywords\n    $ ostt keyword\n\n    # Manage deterministic text replace rules\n    $ ostt replace\n    \n    # Edit configuration file\n    $ ostt config"
 )]
 #[command(
-    after_help = "CONFIGURATION:\n    Config file:        ~/.config/ostt/ostt.toml\n    Logs:               ~/.local/state/ostt/ostt.log.*\n\nFor more information, visit: https://github.com/kristoferlund/ostt"
+    after_help = CONFIGURATION_HELP
 )]
 struct Cli {
     /// Copy transcription to clipboard instead of stdout (record default command)
@@ -339,10 +349,10 @@ enum Commands {
     /// Launch ostt in a popup terminal window
     ///
     /// Spawns a terminal emulator with ostt running inside it. Pressing the
-    /// same hotkey again (re-running `ostt launch`) sends SIGUSR1 to the
+    /// same hotkey again (re-running `ostt launch`) signals the
     /// running ostt process, which finishes recording and triggers transcription.
     ///
-    /// Configure window settings in ~/.config/ostt/ostt.toml under [popup].
+    /// Configure window settings in the ostt config file under [popup].
     ///
     /// Examples:
     ///   ostt launch -c                  # Record, transcribe, copy to clipboard
